@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Musify — Free Music Streaming Player</title>
+    <meta name="description" content="Musify is a free music streaming web player." />
+    <!-- PWA manifest add kar diya hai taaki app install ho sake -->
+    <link rel="manifest" href="./manifest.json" />
+    <link rel="stylesheet" href="./style.css" />
+    <link rel="icon" href="./assets/logo.svg" type="image/svg+xml" />
+  </head>
+  <body>
+    <!-- ============ APP SHELL ============ -->
+    <div class="app">
+      <!-- Sidebar -->
+      <aside class="sidebar" id="sidebar" aria-label="Main navigation">
+        <div class="brand">
+          <img src="https://www.vectorlogo.zone/logos/spotify/spotify-icon.svg" alt="Musify logo" width="30" height="30" />
+          <span>Musify</span>
+        </div>
+
+        <nav class="nav">
+          <button class="nav-item active" data-view="home"><span class="ico">⌂</span> Home</button>
+          <button class="nav-item" data-view="search"><span class="ico">⌕</span> Search</button>
+          <button class="nav-item" data-view="library"><span class="ico">≡</span> Your Library</button>
+          <button class="nav-item" data-view="liked"><span class="ico">♥</span> Liked Songs</button>
+          <button class="nav-item" data-view="recent"><span class="ico">↺</span> Recently Played</button>
+          <button class="nav-item" data-view="queue"><span class="ico">☰</span> Queue</button>
+        </nav>
+
+        <div class="side-block">
+          <div class="side-head">
+            <span>Playlists</span>
+            <button class="icon-btn" id="newPlaylistBtn" title="Create playlist">＋</button>
+          </div>
+          <ul class="playlist-list" id="playlistList"></ul>
+        </div>
+
+        <div class="side-foot">
+          <button class="ghost-btn" id="themeBtn">🌙 Dark mode</button>
+        </div>
+      </aside>
+
+      <div class="sidebar-scrim" id="scrim" hidden></div>
+
+      <!-- Main Content -->
+      <main class="main" id="main">
+        <header class="topbar">
+          <button class="icon-btn only-mobile" id="menuBtn" aria-label="Open menu">☰</button>
+          <div class="searchbox">
+            <span class="ico">⌕</span>
+            <input id="searchInput" type="search" placeholder="Search songs, artists or albums" autocomplete="off" />
+          </div>
+          <button class="ghost-btn only-desktop" id="themeBtn2">🌙</button>
+        </header>
+
+        <section id="view" class="view" aria-live="polite"></section>
+        <div id="sentinel" class="sentinel"></div>
+      </main>
+    </div>
+
+    <!-- ============ PLAYER BAR ============ -->
+    <footer class="player" id="player">
+      <div class="now">
+        <img id="npArt" class="np-art" alt="" src="./assets/placeholder.svg" />
+        <div class="np-meta">
+          <div class="np-title" id="npTitle">Nothing playing</div>
+          <div class="np-artist" id="npArtist">Pick a track to start</div>
+        </div>
+        <button class="icon-btn like" id="likeBtn" title="Like (L)">♡</button>
+      </div>
+
+      <div class="controls">
+        <div class="buttons">
+          <button class="icon-btn" id="shuffleBtn" title="Shuffle (S)">⤨</button>
+          <button class="icon-btn" id="prevBtn" title="Previous">⏮</button>
+          <button class="play-btn" id="playBtn" title="Play / Pause (Space)">▶</button>
+          <button class="icon-btn" id="nextBtn" title="Next">⏭</button>
+          <button class="icon-btn" id="repeatBtn" title="Repeat (R)">🔁</button>
+        </div>
+        <div class="seek">
+          <span id="curTime">0:00</span>
+          <input id="seek" type="range" min="0" max="100" value="0" step="0.1" />
+          <span id="durTime">0:00</span>
+        </div>
+      </div>
+
+      <div class="extras">
+        <button class="icon-btn" id="lyricsBtn" title="Lyrics">🎤</button>
+        <button class="icon-btn" id="queueBtn" title="Queue">☰</button>
+        <span class="ico vol-ico" id="muteBtn">🔊</span>
+        <input id="volume" type="range" min="0" max="1" step="0.01" value="0.8" />
+      </div>
+    </footer>
+
+    <!-- Mini player (mobile / collapsed) -->
+    <div class="mini" id="mini" hidden>
+      <img id="miniArt" src="./assets/placeholder.svg" alt="" />
+      <div class="mini-meta"><b id="miniTitle"></b><span id="miniArtist"></span></div>
+      <button class="icon-btn" id="miniPlay">▶</button>
+      <button class="icon-btn" id="miniClose">✕</button>
+    </div>
+
+    <!-- Lyrics panel -->
+    <div class="panel" id="lyricsPanel" hidden>
+      <div class="panel-head">
+        <b>Lyrics</b><button class="icon-btn" id="lyricsClose">✕</button>
+      </div>
+      <pre id="lyricsBody" class="lyrics">—</pre>
+    </div>
+
+    <!-- Modal -->
+    <div class="modal" id="modal" hidden>
+      <div class="modal-card">
+        <h3 id="modalTitle">New playlist</h3>
+        <label>Name<input id="plName" type="text" placeholder="Chill mix" /></label>
+        <label>Cover image URL (optional)<input id="plCover" type="url" placeholder="https://…" /></label>
+        <div class="modal-actions">
+          <button class="ghost-btn" id="modalCancel">Cancel</button>
+          <button class="primary-btn" id="modalSave">Save</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="toasts" id="toasts"></div>
+    
+    <!-- Yahan normal audio tag wapas laga diya gaya hai -->
+    <audio id="audio" preload="metadata"></audio>
+
+    <script src="./script.js" type="module"></script>
+  </body>
+</html>
