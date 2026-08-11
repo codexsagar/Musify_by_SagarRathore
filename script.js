@@ -1,5 +1,5 @@
 /* ============================================================
- * Musify — Free Music Streaming Player (Final 6-Card Guaranteed Grid)
+ * Musify — Free Music Streaming Player (Fully Fixed & Optimized)
  * ============================================================ */
 
 const CONFIG = {
@@ -247,7 +247,7 @@ function addToPlaylist(track) {
 }
 
 /* ------------------------------------------------------------------
- * Rendering & UI with Guaranteed 6-Card Grid
+ * Rendering & UI with Guaranteed 6-Card Grid & Server Wake-up Retry
  * ---------------------------------------------------------------- */
 let homeCache = {};
 
@@ -390,27 +390,37 @@ const ui = {
       </div>
       ${activeSections.map(
         (s, i) => `
-        <div class="section-head"><h2>${s.title}</h2><span>Preview clips</span></div>
+        <div class="section-head"><h2>${s.title}</h2><span>Loading songs...</span></div>
         <div id="sec-${i}">${ui.skeletonGrid(6)}</div>`
       ).join("")}`;
 
     activeSections.forEach(async (s, i) => {
       const host = $(`#sec-${i}`);
-      try {
-        let list = await api.search(s.term, { limit: 40 });
-        
-        const uniqueGridList = [];
-        const seenArtworks = new Set();
-        for (let track of list) {
-          if (!seenArtworks.has(track.artwork)) {
-            seenArtworks.add(track.artwork);
-            uniqueGridList.push(track);
-          }
-          if (uniqueGridList.length >= 6) break;
-        }
+      const spanHost = host.previousElementSibling.querySelector("span");
+      
+      let attempts = 0;
+      let list = [];
 
-        // 💡 GUARANTEE 6 CARDS: Agar kisi section mein 6 se kam gaane hue, toh use bollywood hits se backfill kar do!
-        if (uniqueGridList.length < 6) {
+      while (attempts < 2 && list.length === 0) {
+        try {
+          list = await api.search(s.term, { limit: 40 });
+        } catch (e) {
+          attempts++;
+        }
+      }
+
+      const uniqueGridList = [];
+      const seenArtworks = new Set();
+      for (let track of list) {
+        if (!seenArtworks.has(track.artwork)) {
+          seenArtworks.add(track.artwork);
+          uniqueGridList.push(track);
+        }
+        if (uniqueGridList.length >= 6) break;
+      }
+
+      if (uniqueGridList.length < 6) {
+        try {
           const fallbackList = await api.search("bollywood hits", { limit: 20 });
           for (let track of fallbackList) {
             if (!seenArtworks.has(track.artwork) && uniqueGridList.length < 6) {
@@ -418,14 +428,18 @@ const ui = {
               uniqueGridList.push(track);
             }
           }
-        }
+        } catch (e) {}
+      }
 
+      if (uniqueGridList.length > 0) {
+        spanHost.textContent = "Preview clips";
         homeCache[i] = uniqueGridList;
         host.innerHTML = `<div class="grid">${uniqueGridList
           .map((t, k) => ui.card(t, `home:${i}`, k))
           .join("")}</div>`;
-      } catch (err) {
-        host.innerHTML = ui.errorBox("Couldn't load this section.", `retry-${i}`);
+      } else {
+        spanHost.textContent = "Failed to load";
+        host.innerHTML = ui.errorBox("Server is waking up, tap to retry.", `retry-${i}`);
         $(`#retry-${i}`).onclick = () => ui.home();
       }
     });
@@ -558,197 +572,4 @@ ui.view.addEventListener("click", (e) => {
 
   const act = actBtn?.dataset.act;
   if (act === "like") return toggleLike(track);
-  if (act === "add") return addToPlaylist(track);
-  if (act === "queue") {
-    state.queue.push(track);
-    toast("Added to queue");
-    return;
-  }
-  player.load(list, idx);
-});
-
-const runSearch = async (reset = true) => {
-  const s = state.search;
-  if (s.loading || (!reset && s.done) || !s.term) return;
-  
-  if (reset && s.term.trim()) {
-    state.history = [s.term.trim(), ...state.history.filter(item => item.toLowerCase() !== s.term.toLowerCase())].slice(0, 10);
-    persist();
-  }
-
-  s.loading = true;
-  if (reset) {
-    s.offset = 0;
-    s.done = false;
-    s.results = [];
-    ui.searchView();
-    $("#searchResults").innerHTML = ui.skeletonRows(8);
-  } else {
-    $("#searchMore").innerHTML = ui.skeletonRows(3);
-  }
-  try {
-    const rows = await api.search(s.term, { offset: s.offset });
-    s.offset += CONFIG.PAGE_SIZE;
-    if (rows.length < 1) s.done = true;
-    s.results = [...s.results, ...rows];
-    $("#searchResults").innerHTML = ui.trackList(s.results, "search");
-    const count = $(".section-head span");
-    if (count) count.textContent = `${s.results.length} songs`;
-    $("#searchMore").innerHTML = s.done ? `<p class="empty">End of results.</p>` : "";
-    ui.markPlaying();
-  } catch (err) {
-    $("#searchResults").innerHTML = ui.errorBox("Search failed.", "retrySearch");
-    $("#retrySearch").onclick = () => runSearch(true);
-  } finally {
-    s.loading = false;
-  }
-};
-
-$("#searchInput").addEventListener(
-  "input",
-  debounce((e) => {
-    const term = e.target.value.trim();
-    state.search.term = term;
-    if (state.view !== "search") navigate("search");
-    term ? runSearch(true) : ui.searchView();
-  }, 450)
-);
-
-$("#searchInput").addEventListener("focus", () => {
-  if (state.view !== "search") navigate("search");
-});
-
-new IntersectionObserver(
-  (entries) => {
-    if (entries[0].isIntersecting && state.view === "search" && state.search.term) runSearch(false);
-  },
-  { rootMargin: "300px" }
-).observe($("#sentinel"));
-
-/* ------------------------------------------------------------------
- * Player Controls
- * ---------------------------------------------------------------- */
-$("#playBtn").onclick = () => player.toggle();
-$("#miniPlay").onclick = () => player.toggle();
-$("#nextBtn").onclick = () => player.next();
-$("#prevBtn").onclick = () => player.prev();
-$("#miniClose").onclick = () => ($("#mini").hidden = true);
-$("#likeBtn").onclick = () => {
-  const cur = state.queue[state.index];
-  if (cur) toggleLike(cur);
-};
-$("#queueBtn").onclick = () => navigate("queue");
-
-$("#shuffleBtn").onclick = (e) => {
-  state.shuffle = !state.shuffle;
-  e.currentTarget.classList.toggle("on", state.shuffle);
-  toast(`Shuffle ${state.shuffle ? "on" : "off"}`);
-};
-
-$("#repeatBtn").onclick = (e) => {
-  state.repeat = state.repeat === "off" ? "all" : state.repeat === "all" ? "one" : "off";
-  e.currentTarget.classList.toggle("on", state.repeat !== "off");
-  e.currentTarget.textContent = state.repeat === "one" ? "🔂" : "🔁";
-  toast(`Repeat: ${state.repeat}`);
-};
-
-audio.addEventListener("play", () => {
-  $("#playBtn").textContent = "⏸";
-  $("#miniPlay").textContent = "⏸";
-});
-audio.addEventListener("pause", () => {
-  $("#playBtn").textContent = "▶";
-  $("#miniPlay").textContent = "▶";
-});
-audio.addEventListener("timeupdate", () => {
-  const pct = audio.duration ? (audio.currentTime / audio.duration) * 100 : 0;
-  $("#seek").value = pct;
-  $("#curTime").textContent = fmtTime(audio.currentTime);
-});
-audio.addEventListener("loadedmetadata", () => ($("#durTime").textContent = fmtTime(audio.duration)));
-audio.addEventListener("ended", () => player.next(true));
-audio.addEventListener("error", () => {
-  if (audio.src) toast("This track could not be played", "err");
-});
-
-$("#seek").addEventListener("input", (e) => {
-  if (audio.duration) audio.currentTime = (e.target.value / 100) * audio.duration;
-});
-$("#volume").addEventListener("input", (e) => {
-  audio.volume = Number(e.target.value);
-  audio.muted = false;
-  store.write("volume", audio.volume);
-  $("#muteBtn").textContent = audio.volume === 0 ? "🔇" : "🔊";
-});
-$("#muteBtn").onclick = () => {
-  audio.muted = !audio.muted;
-  $("#muteBtn").textContent = audio.muted ? "🔇" : "🔊";
-};
-
-/* ------------------------------------------------------------------
- * Lyrics & UI wiring
- * ---------------------------------------------------------------- */
-async function loadLyrics() {
-  const cur = state.queue[state.index];
-  const body = $("#lyricsBody");
-  if (!cur) return (body.textContent = "Play a song to see its lyrics.");
-  body.textContent = "Loading lyrics…";
-  try {
-    const text = await api.lyrics(cur.artist, cur.title);
-    body.textContent = text || "No lyrics found for this track.";
-  } catch {
-    body.textContent = "No lyrics found for this track.";
-  }
-}
-$("#lyricsBtn").onclick = () => {
-  const p = $("#lyricsPanel");
-  p.hidden = !p.hidden;
-  if (!p.hidden) loadLyrics();
-};
-$("#lyricsClose").onclick = () => ($("#lyricsPanel").hidden = true);
-
-function openPlaylistModal() {
-  $("#modal").hidden = false;
-  $("#plName").value = "";
-  $("#plCover").value = "";
-  $("#plName").focus();
-}
-$("#newPlaylistBtn").onclick = openPlaylistModal;
-$("#modalCancel").onclick = () => ($("#modal").hidden = true);
-$("#modalSave").onclick = () => {
-  const name = $("#plName").value.trim();
-  if (!name) return toast("Name your playlist first", "err");
-  state.playlists.push({ id: String(Date.now()), name, cover: $("#plCover").value.trim(), tracks: [] });
-  persist();
-  ui.renderPlaylists();
-  $("#modal").hidden = true;
-  toast(`Playlist "${name}" created`);
-  if (state.view === "library") ui.render();
-};
-
-function applyTheme(theme) {
-  document.documentElement.dataset.theme = theme;
-  const label = theme === "dark" ? "🌙 Dark mode" : "☀️ Light mode";
-  $("#themeBtn").textContent = label;
-  $("#themeBtn2").textContent = theme === "dark" ? "🌙" : "☀️";
-  store.write("theme", theme);
-}
-const toggleTheme = () =>
-  applyTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark");
-$("#themeBtn").onclick = toggleTheme;
-$("#themeBtn2").onclick = toggleTheme;
-applyTheme(store.read("theme", "dark"));
-
-const closeSidebar = () => {
-  $("#sidebar").classList.remove("open");
-  $("#scrim").hidden = true;
-};
-$("#menuBtn").onclick = () => {
-  $("#sidebar").classList.add("open");
-  $("#scrim").hidden = false;
-};
-$("#scrim").onclick = closeSidebar;
-
-// Boot
-ui.renderPlaylists();
-ui.render();
+  if (ac
