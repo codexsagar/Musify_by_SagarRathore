@@ -1,17 +1,12 @@
 /* ============================================================
- * Musify — Free Music Streaming Player
- * Vanilla ES6+ modules. Connected to Custom Render API.
+ * Musify — Free Music Streaming Player (Final Optimized)
  * ============================================================ */
 
 const CONFIG = {
-  // Aapka naya Render Server URL
   API_BASE: "https://musify-api-paka.onrender.com", 
-  PAGE_SIZE: 25,
+  PAGE_SIZE: 50, // Results ki limit bada di hai taaki zyadatar gaane dikhein
 };
 
-/* ------------------------------------------------------------------
- * 1. Tiny helpers
- * ---------------------------------------------------------------- */
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
 
@@ -45,7 +40,7 @@ const debounce = (fn, ms = 400) => {
 };
 
 /* ------------------------------------------------------------------
- * 2. Local storage layer
+ * Local storage & History layer
  * ---------------------------------------------------------------- */
 const store = {
   read(key, fallback) {
@@ -60,7 +55,7 @@ const store = {
     try {
       localStorage.setItem(`wavelet:${key}`, JSON.stringify(value));
     } catch {
-      toast("Storage is full — could not save", "err");
+      toast("Storage is full", "err");
     }
   },
 };
@@ -69,6 +64,7 @@ const state = {
   liked: store.read("liked", []),
   recent: store.read("recent", []),
   playlists: store.read("playlists", []),
+  history: store.read("searchHistory", []),
   queue: [],
   index: -1,
   shuffle: false,
@@ -81,10 +77,11 @@ const persist = () => {
   store.write("liked", state.liked);
   store.write("recent", state.recent);
   store.write("playlists", state.playlists);
+  store.write("searchHistory", state.history);
 };
 
 /* ------------------------------------------------------------------
- * 3. API layer (Render JioSaavn API)
+ * API layer
  * ---------------------------------------------------------------- */
 const normalize = (r) => {
   const getLink = (arr) => {
@@ -109,13 +106,10 @@ const normalize = (r) => {
 const api = {
   async search(term, { offset = 0, limit = CONFIG.PAGE_SIZE } = {}) {
     const page = Math.floor(offset / limit) + 1;
-    
     try {
       const url = `${CONFIG.API_BASE}/api/search/songs?query=${encodeURIComponent(term)}&page=${page}&limit=${limit}`;
       const res = await fetch(url);
-      
-      if (!res.ok) throw new Error(`API error ${res.status}`);
-      
+      if (!res.ok) return [];
       const json = await res.json();
       
       let results = [];
@@ -127,7 +121,7 @@ const api = {
       return results.map(normalize).filter((t) => t.preview);
     } catch (err) {
       console.error("API Error:", err);
-      throw err;
+      return [];
     }
   },
   
@@ -144,22 +138,33 @@ const api = {
 };
 
 /* ------------------------------------------------------------------
- * 4. Audio engine
+ * Audio engine & Smart Auto-Queue
  * ---------------------------------------------------------------- */
 const audio = $("#audio");
 audio.volume = Number(store.read("volume", 0.8));
 $("#volume").value = audio.volume;
 
 const player = {
-  load(list, index, { autoplay = true } = {}) {
+  async load(list, index, { autoplay = true } = {}) {
     state.queue = list;
     state.index = index;
     const track = list[index];
     if (!track) return;
+    
     audio.src = track.preview;
     if (autoplay) audio.play().catch(() => toast("Playback blocked — tap play", "err"));
     ui.renderNowPlaying(track);
     history.push(track);
+
+    if (index >= list.length - 2) {
+      try {
+        const extraSongs = await api.search(track.artist || track.title, { limit: 10 });
+        const newTracks = extraSongs.filter(st => !state.queue.some(q => q.id === st.id));
+        state.queue.push(...newTracks);
+      } catch(e) {
+        console.log("Auto-queue fetch error", e);
+      }
+    }
   },
   toggle() {
     if (!audio.src) return toast("Choose a song first");
@@ -194,12 +199,12 @@ const history = {
   push(track) {
     state.recent = [track, ...state.recent.filter((t) => t.id !== track.id)].slice(0, 30);
     persist();
-    if (state.view === "recent") ui.render();
+    if (state.view === "recent" || state.view === "search") ui.render();
   },
 };
 
 /* ------------------------------------------------------------------
- * 5. Likes & playlists
+ * Likes & Playlists
  * ---------------------------------------------------------------- */
 const isLiked = (id) => state.liked.some((t) => t.id === id);
 
@@ -233,7 +238,7 @@ function addToPlaylist(track) {
 }
 
 /* ------------------------------------------------------------------
- * 6. Rendering
+ * Rendering
  * ---------------------------------------------------------------- */
 const HOME_SECTIONS = [
   { title: "Trending in India", term: "bollywood hits" },
@@ -360,7 +365,7 @@ const ui = {
   async home() {
     ui.view.innerHTML = `
       <div class="hero">
-        <h3>Welcome to Musify, presented by Sagar Rathore! 🎧</h3>
+        <h1>Welcome to Musify, presented by Sagar Rathore! 🎧</h1>
         <p>Discover your favorite tracks, build playlists, and keep the good vibes playing while you browse.</p>
       </div>
       ${HOME_SECTIONS.map(
@@ -387,13 +392,55 @@ const ui = {
 
   searchView() {
     const s = state.search;
+    
+    // Search terms history chips
+    const historyHtml = state.history.length ? `
+      <div style="margin-bottom: 20px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 8px;">
+          <h3 style="font-size:16px; color:var(--muted); margin:0;">Recent Searches</h3>
+          <button id="clearHistory" class="ghost-btn" style="padding: 2px 8px; font-size: 12px;">Clear</button>
+        </div>
+        <div style="display:flex; flex-wrap:wrap; gap:8px;">
+          ${state.history.map(item => `<button class="history-chip ghost-btn" data-term="${escapeHtml(item)}" style="font-size:13px; padding:6px 12px;">🔍 ${escapeHtml(item)}</button>`).join("")}
+        </div>
+      </div>` : "";
+
+    // Recently played / searched songs history section
+    const recentSongsHtml = state.recent.length && !s.term ? `
+      <div style="margin-bottom: 24px;">
+        <h3 style="font-size:16px; color:var(--muted); margin:0 0 10px 0;">Recently Played Songs</h3>
+        ${ui.trackList(state.recent.slice(0, 5), "recent")}
+      </div>` : "";
+
     ui.view.innerHTML = `
-      <div class="section-head"><h2>${s.term ? `Results for “${escapeHtml(s.term)}”` : "Search"}</h2>
-      <span>${s.results.length} songs</span></div>
-      <div id="searchResults">${
-        s.term ? ui.trackList(s.results, "search") : `<p class="empty">Start typing to find songs, artists or albums.</p>`
-      }</div>
+      <div class="section-head">
+        <h2>${s.term ? `Results for “${escapeHtml(s.term)}”` : "Search"}</h2>
+        <span>${s.results.length} songs</span>
+      </div>
+      ${historyHtml}
+      ${recentSongsHtml}
+      <div id="searchResults">
+        ${s.term ? ui.trackList(s.results, "search") : `<p class="empty">Start typing to find songs, artists or albums.</p>`}
+      </div>
       <div id="searchMore"></div>`;
+
+    const clearBtn = $("#clearHistory");
+    if (clearBtn) {
+      clearBtn.onclick = () => {
+        state.history = [];
+        persist();
+        ui.searchView();
+      };
+    }
+
+    $$(".history-chip").forEach(chip => {
+      chip.onclick = () => {
+        const term = chip.dataset.term;
+        $("#searchInput").value = term;
+        state.search.term = term;
+        runSearch(true);
+      };
+    });
   },
 
   ctxList(ctx) {
@@ -423,14 +470,6 @@ const ui = {
     ui.syncLike();
     ui.markPlaying();
     if (!$("#lyricsPanel").hidden) loadLyrics();
-    if ("mediaSession" in navigator) {
-      navigator.mediaSession.metadata = new MediaMetadata({
-        title: t.title,
-        artist: t.artist,
-        album: t.album,
-        artwork: [{ src: t.artwork, sizes: "300x300", type: "image/jpeg" }],
-      });
-    }
   },
 
   markPlaying() {
@@ -450,7 +489,7 @@ const ui = {
 const homeCache = {};
 
 /* ------------------------------------------------------------------
- * 7. Navigation & events
+ * Navigation & Events
  * ---------------------------------------------------------------- */
 function navigate(view) {
   state.view = view;
@@ -494,6 +533,12 @@ ui.view.addEventListener("click", (e) => {
 const runSearch = async (reset = true) => {
   const s = state.search;
   if (s.loading || (!reset && s.done) || !s.term) return;
+  
+  if (reset && s.term.trim()) {
+    state.history = [s.term.trim(), ...state.history.filter(item => item.toLowerCase() !== s.term.toLowerCase())].slice(0, 10);
+    persist();
+  }
+
   s.loading = true;
   if (reset) {
     s.offset = 0;
@@ -515,9 +560,8 @@ const runSearch = async (reset = true) => {
     $("#searchMore").innerHTML = s.done ? `<p class="empty">End of results.</p>` : "";
     ui.markPlaying();
   } catch (err) {
-    $("#searchResults").innerHTML = ui.errorBox("Search failed. Check your connection.", "retrySearch");
+    $("#searchResults").innerHTML = ui.errorBox("Search failed.", "retrySearch");
     $("#retrySearch").onclick = () => runSearch(true);
-    toast("Search request failed", "err");
   } finally {
     s.loading = false;
   }
@@ -533,6 +577,10 @@ $("#searchInput").addEventListener(
   }, 450)
 );
 
+$("#searchInput").addEventListener("focus", () => {
+  if (state.view !== "search") navigate("search");
+});
+
 new IntersectionObserver(
   (entries) => {
     if (entries[0].isIntersecting && state.view === "search" && state.search.term) runSearch(false);
@@ -541,7 +589,7 @@ new IntersectionObserver(
 ).observe($("#sentinel"));
 
 /* ------------------------------------------------------------------
- * 8. Player controls wiring
+ * Player Controls
  * ---------------------------------------------------------------- */
 $("#playBtn").onclick = () => player.toggle();
 $("#miniPlay").onclick = () => player.toggle();
@@ -601,7 +649,7 @@ $("#muteBtn").onclick = () => {
 };
 
 /* ------------------------------------------------------------------
- * 9. Lyrics
+ * Lyrics & UI wiring
  * ---------------------------------------------------------------- */
 async function loadLyrics() {
   const cur = state.queue[state.index];
@@ -622,9 +670,6 @@ $("#lyricsBtn").onclick = () => {
 };
 $("#lyricsClose").onclick = () => ($("#lyricsPanel").hidden = true);
 
-/* ------------------------------------------------------------------
- * 10. Playlist modal
- * ---------------------------------------------------------------- */
 function openPlaylistModal() {
   $("#modal").hidden = false;
   $("#plName").value = "";
@@ -644,9 +689,6 @@ $("#modalSave").onclick = () => {
   if (state.view === "library") ui.render();
 };
 
-/* ------------------------------------------------------------------
- * 11. Theme, sidebar, keyboard shortcuts
- * ---------------------------------------------------------------- */
 function applyTheme(theme) {
   document.documentElement.dataset.theme = theme;
   const label = theme === "dark" ? "🌙 Dark mode" : "☀️ Light mode";
@@ -662,7 +704,7 @@ applyTheme(store.read("theme", "dark"));
 
 const closeSidebar = () => {
   $("#sidebar").classList.remove("open");
-  $("#scrim").hidden = true;
+  $("#scrim").hidden = page => {};
 };
 $("#menuBtn").onclick = () => {
   $("#sidebar").classList.add("open");
@@ -670,70 +712,6 @@ $("#menuBtn").onclick = () => {
 };
 $("#scrim").onclick = closeSidebar;
 
-document.addEventListener("keydown", (e) => {
-  const typing = ["INPUT", "TEXTAREA"].includes(e.target.tagName);
-  if (typing) return;
-  switch (e.code) {
-    case "Space":
-      e.preventDefault();
-      player.toggle();
-      break;
-    case "ArrowRight":
-      e.shiftKey ? player.next() : player.seekBy(5);
-      break;
-    case "ArrowLeft":
-      e.shiftKey ? player.prev() : player.seekBy(-5);
-      break;
-    case "ArrowUp":
-      e.preventDefault();
-      $("#volume").value = audio.volume = Math.min(1, audio.volume + 0.05);
-      break;
-    case "ArrowDown":
-      e.preventDefault();
-      $("#volume").value = audio.volume = Math.max(0, audio.volume - 0.05);
-      break;
-    case "KeyL": {
-      const cur = state.queue[state.index];
-      if (cur) toggleLike(cur);
-      break;
-    }
-    case "KeyS":
-      $("#shuffleBtn").click();
-      break;
-    case "KeyR":
-      $("#repeatBtn").click();
-      break;
-    case "Slash":
-      e.preventDefault();
-      $("#searchInput").focus();
-      break;
-  }
-});
-
-/* ------------------------------------------------------------------
- * 12. Service worker (offline UI shell)
- * ---------------------------------------------------------------- */
-// Development ke time ise 'false' rakhein. GitHub par daalne se pehle ise 'true' kar dijiyega.
-const enableServiceWorkerForNow = false; 
-
-const swAllowed =
-  enableServiceWorkerForNow &&
-  "serviceWorker" in navigator &&
-  window.top === window.self &&
-  !/^(id-)?preview--/.test(location.hostname) &&
-  !/lovableproject(-dev)?\.com$/.test(location.hostname) &&
-  !new URLSearchParams(location.search).has("sw=off");
-
-if (swAllowed) {
-  window.addEventListener("load", () => navigator.serviceWorker.register("./sw.js").catch(() => {}));
-} else if ("serviceWorker" in navigator) {
-  navigator.serviceWorker.getRegistrations?.().then((rs) =>
-    rs.forEach((r) => r.active?.scriptURL.endsWith("/sw.js") && r.unregister())
-  );
-}
-
-/* ------------------------------------------------------------------
- * 13. Boot
- * ---------------------------------------------------------------- */
+// Boot
 ui.renderPlaylists();
 ui.render();
