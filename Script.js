@@ -1,10 +1,10 @@
 /* ============================================================
- * Musify — Free Music Streaming Player (Final Optimized)
+ * Musify — Free Music Streaming Player (Fully Dynamic Personalized Home)
  * ============================================================ */
 
 const CONFIG = {
   API_BASE: "https://musify-api-paka.onrender.com", 
-  PAGE_SIZE: 50, // Results ki limit bada di hai taaki zyadatar gaane dikhein
+  PAGE_SIZE: 25,
 };
 
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -81,16 +81,13 @@ const persist = () => {
 };
 
 /* ------------------------------------------------------------------
- * API layer
+ * API layer (JioSaavn via Render)
  * ---------------------------------------------------------------- */
-const normalize = (r) => {
+const normalizeJio = (r) => {
   const getLink = (arr) => {
-    if (Array.isArray(arr) && arr.length > 0) {
-      return arr[arr.length - 1].link || arr[arr.length - 1].url || "";
-    }
+    if (Array.isArray(arr) && arr.length > 0) return arr[arr.length - 1].link || arr[arr.length - 1].url || "";
     return typeof arr === 'string' ? arr : "";
   };
-
   return {
     id: String(r.id),
     title: r.name || r.title || "Unknown",
@@ -99,7 +96,6 @@ const normalize = (r) => {
     artwork: getLink(r.image) || "./assets/placeholder.svg",
     preview: getLink(r.downloadUrl) || r.media_url || "",
     duration: Number(r.duration) || 0,
-    genre: ""
   };
 };
 
@@ -118,7 +114,7 @@ const api = {
       else if (Array.isArray(json.results)) results = json.results;
       else if (Array.isArray(json)) results = json;
       
-      return results.map(normalize).filter((t) => t.preview);
+      return results.map(normalizeJio).filter((t) => t.preview);
     } catch (err) {
       console.error("API Error:", err);
       return [];
@@ -138,7 +134,7 @@ const api = {
 };
 
 /* ------------------------------------------------------------------
- * Audio engine & Smart Auto-Queue
+ * Audio Engine & Smart Auto-Queue
  * ---------------------------------------------------------------- */
 const audio = $("#audio");
 audio.volume = Number(store.read("volume", 0.8));
@@ -238,14 +234,9 @@ function addToPlaylist(track) {
 }
 
 /* ------------------------------------------------------------------
- * Rendering
+ * Rendering & UI
  * ---------------------------------------------------------------- */
-const HOME_SECTIONS = [
-  { title: "Trending in India", term: "bollywood hits" },
-  { title: "Arijit Singh Specials", term: "arijit singh" },
-  { title: "Punjabi Beats", term: "punjabi 2024" },
-  { title: "Chill & Lo-Fi", term: "lofi chill hindi" },
-];
+let homeCache = {};
 
 const ui = {
   view: $("#view"),
@@ -363,18 +354,47 @@ const ui = {
   },
 
   async home() {
+    // Clear old cache so new recommendations load fresh
+    homeCache = {};
+
+    let activeSections = [
+      { title: "Trending in India", term: "bollywood hits" },
+      { title: "Arijit Singh Specials", term: "arijit singh" },
+      { title: "Punjabi Beats", term: "punjabi 2024" },
+      { title: "Chill & Lo-Fi", term: "lofi chill hindi" },
+    ];
+
+    // Agar recent mein gaana hai, toh uske artist ko sabse upar lao
+    if (state.recent.length > 0) {
+      const lastArtist = state.recent[0].artist;
+      if (lastArtist && lastArtist !== "Unknown artist") {
+        activeSections.unshift({ title: `Because you listened to ${lastArtist} 🎧`, term: lastArtist });
+      }
+    }
+
+    // Agar search history hai, toh usko bhi dynamic section bana do
+    if (state.history.length > 0) {
+      const lastSearch = state.history[0];
+      if (!activeSections.some(s => s.term.toLowerCase() === lastSearch.toLowerCase())) {
+        activeSections.splice(1, 0, { title: `Based on search "${lastSearch}" 🔍`, term: lastSearch });
+      }
+    }
+
+    // Max 4 sections rakho taaki clean lage
+    activeSections = activeSections.slice(0, 4);
+
     ui.view.innerHTML = `
       <div class="hero">
-        <h1>Welcome to Musify, presented by Sagar Rathore! 🎧</h1>
+        <h3>Welcome to Musify, presented by Sagar Rathore! 🎧</h3>
         <p>Discover your favorite tracks, build playlists, and keep the good vibes playing while you browse.</p>
       </div>
-      ${HOME_SECTIONS.map(
+      ${activeSections.map(
         (s, i) => `
         <div class="section-head"><h2>${s.title}</h2><span>Preview clips</span></div>
         <div id="sec-${i}">${ui.skeletonGrid(6)}</div>`
       ).join("")}`;
 
-    HOME_SECTIONS.forEach(async (s, i) => {
+    activeSections.forEach(async (s, i) => {
       const host = $(`#sec-${i}`);
       try {
         const list = await api.search(s.term, { limit: 12 });
@@ -393,7 +413,6 @@ const ui = {
   searchView() {
     const s = state.search;
     
-    // Search terms history chips
     const historyHtml = state.history.length ? `
       <div style="margin-bottom: 20px;">
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 8px;">
@@ -405,7 +424,6 @@ const ui = {
         </div>
       </div>` : "";
 
-    // Recently played / searched songs history section
     const recentSongsHtml = state.recent.length && !s.term ? `
       <div style="margin-bottom: 24px;">
         <h3 style="font-size:16px; color:var(--muted); margin:0 0 10px 0;">Recently Played Songs</h3>
@@ -485,8 +503,6 @@ const ui = {
     btn.textContent = on ? "♥" : "♡";
   },
 };
-
-const homeCache = {};
 
 /* ------------------------------------------------------------------
  * Navigation & Events
@@ -704,7 +720,7 @@ applyTheme(store.read("theme", "dark"));
 
 const closeSidebar = () => {
   $("#sidebar").classList.remove("open");
-  $("#scrim").hidden = page => {};
+  $("#scrim").hidden = true;
 };
 $("#menuBtn").onclick = () => {
   $("#sidebar").classList.add("open");
