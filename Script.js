@@ -1,5 +1,5 @@
 /* ============================================================
- * Musify — Free Music Streaming Player (Fully Dynamic Personalized Home)
+ * Musify — Free Music Streaming Player (Final 6-Card Guaranteed Grid)
  * ============================================================ */
 
 const CONFIG = {
@@ -81,7 +81,7 @@ const persist = () => {
 };
 
 /* ------------------------------------------------------------------
- * API layer (JioSaavn via Render)
+ * API layer with Clean Deduplication
  * ---------------------------------------------------------------- */
 const normalizeJio = (r) => {
   const getLink = (arr) => {
@@ -114,7 +114,18 @@ const api = {
       else if (Array.isArray(json.results)) results = json.results;
       else if (Array.isArray(json)) results = json;
       
-      return results.map(normalizeJio).filter((t) => t.preview);
+      const mapped = results.map(normalizeJio).filter((t) => t.preview);
+      
+      const seen = new Set();
+      const uniqueResults = mapped.filter((t) => {
+        const cleanTitle = t.title.toLowerCase().replace(/\[.*?\]|\(.*?\)/g, "").trim();
+        if (!cleanTitle) return false;
+        if (seen.has(cleanTitle)) return false;
+        seen.add(cleanTitle);
+        return true;
+      });
+
+      return uniqueResults;
     } catch (err) {
       console.error("API Error:", err);
       return [];
@@ -154,7 +165,9 @@ const player = {
 
     if (index >= list.length - 2) {
       try {
-        const extraSongs = await api.search(track.artist || track.title, { limit: 10 });
+        const mixTerms = ["90s hits bollywood", "romantic songs hindi", "evergreen hits", "party mix 2026"];
+        const randomTerm = mixTerms[Math.floor(Math.random() * mixTerms.length)];
+        const extraSongs = await api.search(randomTerm, { limit: 10 });
         const newTracks = extraSongs.filter(st => !state.queue.some(q => q.id === st.id));
         state.queue.push(...newTracks);
       } catch(e) {
@@ -187,7 +200,7 @@ const player = {
     player.load(state.queue, Math.max(0, state.index - 1));
   },
   seekBy(sec) {
-    if (audio.duration) audio.currentTime = Math.min(audio.duration, Math.max(0, audio.currentTime + sec));
+    if (audio.duration) audio.currentTime = Math.min(audio.duration, Math.max(0, audio.duration + sec));
   },
 };
 
@@ -234,7 +247,7 @@ function addToPlaylist(track) {
 }
 
 /* ------------------------------------------------------------------
- * Rendering & UI
+ * Rendering & UI with Guaranteed 6-Card Grid
  * ---------------------------------------------------------------- */
 let homeCache = {};
 
@@ -354,33 +367,20 @@ const ui = {
   },
 
   async home() {
-    // Clear old cache so new recommendations load fresh
     homeCache = {};
 
     let activeSections = [
       { title: "Trending in India", term: "bollywood hits" },
-      { title: "Arijit Singh Specials", term: "arijit singh" },
+      { title: "90s Evergreen Hits", term: "90s romantic hits hindi" },
       { title: "Punjabi Beats", term: "punjabi 2024" },
       { title: "Chill & Lo-Fi", term: "lofi chill hindi" },
     ];
 
-    // Agar recent mein gaana hai, toh uske artist ko sabse upar lao
-    if (state.recent.length > 0) {
-      const lastArtist = state.recent[0].artist;
-      if (lastArtist && lastArtist !== "Unknown artist") {
-        activeSections.unshift({ title: `Because you listened to ${lastArtist} 🎧`, term: lastArtist });
-      }
-    }
-
-    // Agar search history hai, toh usko bhi dynamic section bana do
     if (state.history.length > 0) {
       const lastSearch = state.history[0];
-      if (!activeSections.some(s => s.term.toLowerCase() === lastSearch.toLowerCase())) {
-        activeSections.splice(1, 0, { title: `Based on search "${lastSearch}" 🔍`, term: lastSearch });
-      }
+      activeSections.unshift({ title: `Because you searched "${lastSearch}" 🔍`, term: lastSearch });
     }
 
-    // Max 4 sections rakho taaki clean lage
     activeSections = activeSections.slice(0, 4);
 
     ui.view.innerHTML = `
@@ -397,10 +397,31 @@ const ui = {
     activeSections.forEach(async (s, i) => {
       const host = $(`#sec-${i}`);
       try {
-        const list = await api.search(s.term, { limit: 12 });
-        homeCache[i] = list;
-        host.innerHTML = `<div class="grid">${list
-          .slice(0, 6)
+        let list = await api.search(s.term, { limit: 40 });
+        
+        const uniqueGridList = [];
+        const seenArtworks = new Set();
+        for (let track of list) {
+          if (!seenArtworks.has(track.artwork)) {
+            seenArtworks.add(track.artwork);
+            uniqueGridList.push(track);
+          }
+          if (uniqueGridList.length >= 6) break;
+        }
+
+        // 💡 GUARANTEE 6 CARDS: Agar kisi section mein 6 se kam gaane hue, toh use bollywood hits se backfill kar do!
+        if (uniqueGridList.length < 6) {
+          const fallbackList = await api.search("bollywood hits", { limit: 20 });
+          for (let track of fallbackList) {
+            if (!seenArtworks.has(track.artwork) && uniqueGridList.length < 6) {
+              seenArtworks.add(track.artwork);
+              uniqueGridList.push(track);
+            }
+          }
+        }
+
+        homeCache[i] = uniqueGridList;
+        host.innerHTML = `<div class="grid">${uniqueGridList
           .map((t, k) => ui.card(t, `home:${i}`, k))
           .join("")}</div>`;
       } catch (err) {
