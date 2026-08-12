@@ -1,9 +1,9 @@
 /* ============================================================
- * Musify — Free Music Streaming Player (Fully Fixed & Optimized)
+ * Musify — Free Music Streaming Player (Clean & Stable)
  * ============================================================ */
 
 const CONFIG = {
-  API_BASE: "https://musify-api-paka.onrender.com", 
+  API_BASE: "https://musify-api-paka.onrender.com",
   PAGE_SIZE: 25,
 };
 
@@ -81,7 +81,7 @@ const persist = () => {
 };
 
 /* ------------------------------------------------------------------
- * API layer with Clean Deduplication
+ * API layer
  * ---------------------------------------------------------------- */
 const normalizeJio = (r) => {
   const getLink = (arr) => {
@@ -101,9 +101,8 @@ const normalizeJio = (r) => {
 
 const api = {
   async search(term, { offset = 0, limit = CONFIG.PAGE_SIZE } = {}) {
-    const page = Math.floor(offset / limit) + 1;
     try {
-      const url = `${CONFIG.API_BASE}/api/search/songs?query=${encodeURIComponent(term)}&page=${page}&limit=${limit}`;
+      const url = `${CONFIG.API_BASE}/api/search/songs?query=${encodeURIComponent(term)}&page=1&limit=${limit}`;
       const res = await fetch(url);
       if (!res.ok) return [];
       const json = await res.json();
@@ -117,15 +116,12 @@ const api = {
       const mapped = results.map(normalizeJio).filter((t) => t.preview);
       
       const seen = new Set();
-      const uniqueResults = mapped.filter((t) => {
+      return mapped.filter((t) => {
         const cleanTitle = t.title.toLowerCase().replace(/\[.*?\]|\(.*?\)/g, "").trim();
-        if (!cleanTitle) return false;
-        if (seen.has(cleanTitle)) return false;
+        if (!cleanTitle || seen.has(cleanTitle)) return false;
         seen.add(cleanTitle);
         return true;
       });
-
-      return uniqueResults;
     } catch (err) {
       console.error("API Error:", err);
       return [];
@@ -145,7 +141,7 @@ const api = {
 };
 
 /* ------------------------------------------------------------------
- * Audio Engine & Smart Auto-Queue
+ * Audio Engine
  * ---------------------------------------------------------------- */
 const audio = $("#audio");
 audio.volume = Number(store.read("volume", 0.8));
@@ -162,18 +158,6 @@ const player = {
     if (autoplay) audio.play().catch(() => toast("Playback blocked — tap play", "err"));
     ui.renderNowPlaying(track);
     history.push(track);
-
-    if (index >= list.length - 2) {
-      try {
-        const mixTerms = ["90s hits bollywood", "romantic songs hindi", "evergreen hits", "party mix 2026"];
-        const randomTerm = mixTerms[Math.floor(Math.random() * mixTerms.length)];
-        const extraSongs = await api.search(randomTerm, { limit: 10 });
-        const newTracks = extraSongs.filter(st => !state.queue.some(q => q.id === st.id));
-        state.queue.push(...newTracks);
-      } catch(e) {
-        console.log("Auto-queue fetch error", e);
-      }
-    }
   },
   toggle() {
     if (!audio.src) return toast("Choose a song first");
@@ -185,9 +169,7 @@ const player = {
       audio.currentTime = 0;
       return audio.play();
     }
-    let i = state.shuffle
-      ? Math.floor(Math.random() * state.queue.length)
-      : state.index + 1;
+    let i = state.shuffle ? Math.floor(Math.random() * state.queue.length) : state.index + 1;
     if (i >= state.queue.length) {
       if (state.repeat === "all") i = 0;
       else return audio.pause();
@@ -199,102 +181,49 @@ const player = {
     if (audio.currentTime > 3) return (audio.currentTime = 0);
     player.load(state.queue, Math.max(0, state.index - 1));
   },
-  seekBy(sec) {
-    if (audio.duration) audio.currentTime = Math.min(audio.duration, Math.max(0, audio.duration + sec));
-  },
 };
 
 const history = {
   push(track) {
     state.recent = [track, ...state.recent.filter((t) => t.id !== track.id)].slice(0, 30);
     persist();
-    if (state.view === "recent" || state.view === "search") ui.render();
   },
 };
 
 /* ------------------------------------------------------------------
- * Likes & Playlists
- * ---------------------------------------------------------------- */
-const isLiked = (id) => state.liked.some((t) => t.id === id);
-
-function toggleLike(track) {
-  if (isLiked(track.id)) {
-    state.liked = state.liked.filter((t) => t.id !== track.id);
-    toast("Removed from Liked Songs");
-  } else {
-    state.liked = [track, ...state.liked];
-    toast("Added to Liked Songs ♥");
-  }
-  persist();
-  ui.syncLike();
-  if (state.view === "liked") ui.render();
-  $$(`.row[data-id="${CSS.escape(track.id)}"] .like-row`).forEach((b) =>
-    b.classList.toggle("on", isLiked(track.id))
-  );
-}
-
-function addToPlaylist(track) {
-  if (!state.playlists.length) return toast("Create a playlist first", "err");
-  const names = state.playlists.map((p, i) => `${i + 1}. ${p.name}`).join("\n");
-  const pick = prompt(`Add "${track.title}" to which playlist?\n\n${names}\n\nEnter number:`);
-  const p = state.playlists[Number(pick) - 1];
-  if (!p) return;
-  if (p.tracks.some((t) => t.id === track.id)) return toast("Already in playlist");
-  p.tracks.push(track);
-  persist();
-  ui.renderPlaylists();
-  toast(`Added to ${p.name}`);
-}
-
-/* ------------------------------------------------------------------
- * Rendering & UI with Guaranteed 6-Card Grid & Server Wake-up Retry
+ * UI & Rendering
  * ---------------------------------------------------------------- */
 let homeCache = {};
 
 const ui = {
   view: $("#view"),
 
-  skeletonGrid(n = 8) {
-    return `<div class="grid">${Array.from({ length: n }, () => '<div class="skeleton sk-card"></div>').join("")}</div>`;
-  },
-  skeletonRows(n = 8) {
-    return Array.from({ length: n }, () => '<div class="skeleton sk-row"></div>').join("");
-  },
-  errorBox(msg, retryId) {
-    return `<div class="error-box"><p>${escapeHtml(msg)}</p><button class="primary-btn" id="${retryId}">Try again</button></div>`;
+  card(t, ctx, i) {
+    return `
+      <article class="card" data-ctx="${ctx}" data-index="${i}" data-id="${t.id}">
+        <img loading="lazy" src="${t.artwork}" alt="${escapeHtml(t.title)}" />
+        <button class="play-fab" data-act="play">▶</button>
+        <b>${escapeHtml(t.title)}</b>
+        <small>${escapeHtml(t.artist)}</small>
+      </article>`;
   },
 
   trackRow(t, i, ctx) {
     return `
       <div class="row" data-id="${t.id}" data-ctx="${ctx}" data-index="${i}">
         <span class="idx">${i + 1}</span>
-        <img loading="lazy" src="${t.artwork}" alt="${escapeHtml(t.album || t.title)} cover" />
+        <img loading="lazy" src="${t.artwork}" alt="" />
         <div>
           <div class="t-title">${escapeHtml(t.title)}</div>
           <div class="t-artist">${escapeHtml(t.artist)}</div>
-        </div>
-        <div class="row-actions">
-          <button class="icon-btn like-row ${isLiked(t.id) ? "on like" : ""}" data-act="like" title="Like">♥</button>
-          <button class="icon-btn" data-act="add" title="Add to playlist">＋</button>
-          <button class="icon-btn" data-act="queue" title="Add to queue">☰</button>
         </div>
         <span class="dur">${fmtTime(t.duration)}</span>
       </div>`;
   },
 
-  trackList(list, ctx = "list") {
-    if (!list.length) return `<p class="empty">Nothing here yet.</p>`;
+  trackList(list, ctx) {
+    if (!list.length) return `<p class="empty">No songs found.</p>`;
     return `<div class="tracks">${list.map((t, i) => ui.trackRow(t, i, ctx)).join("")}</div>`;
-  },
-
-  card(t, ctx, i) {
-    return `
-      <article class="card" data-ctx="${ctx}" data-index="${i}" data-id="${t.id}">
-        <img loading="lazy" src="${t.artwork}" alt="${escapeHtml(t.title)} artwork" />
-        <button class="play-fab" data-act="play">▶</button>
-        <b>${escapeHtml(t.title)}</b>
-        <small>${escapeHtml(t.artist)}</small>
-      </article>`;
   },
 
   async render() {
@@ -303,213 +232,54 @@ const ui = {
 
     if (v === "home") return ui.home();
     if (v === "search") return ui.searchView();
-    if (v === "liked") return ui.simple("Liked Songs", state.liked, "liked");
-    if (v === "recent") return ui.simple("Recently Played", state.recent, "recent");
-    if (v === "queue") return ui.simple("Queue", state.queue, "queue");
-    if (v === "library") return ui.library();
-    if (v.startsWith("pl:")) return ui.playlistView(v.slice(3));
+    if (v === "liked") ui.simple("Liked Songs", state.liked, "liked");
+    if (v === "recent") ui.simple("Recently Played", state.recent, "recent");
+    if (v === "queue") ui.simple("Queue", state.queue, "queue");
   },
 
   simple(title, list, ctx) {
-    ui.view.innerHTML = `
-      <div class="section-head"><h2>${title}</h2><span>${list.length} song${list.length === 1 ? "" : "s"}</span></div>
-      ${list.length ? `<button class="primary-btn" id="playAll">▶ Play all</button>` : ""}
-      <div style="height:14px"></div>
-      ${ui.trackList(list, ctx)}`;
-    const btn = $("#playAll");
-    if (btn) btn.onclick = () => player.load(ui.ctxList(ctx), 0);
-  },
-
-  library() {
-    ui.view.innerHTML = `
-      <div class="section-head"><h2>Your Library</h2><span>${state.playlists.length} playlists</span></div>
-      <button class="primary-btn" id="createPl">＋ New playlist</button>
-      <div style="height:16px"></div>
-      <div class="grid">
-        ${state.playlists
-          .map(
-            (p) => `
-          <article class="card" data-pl="${p.id}">
-            <img loading="lazy" src="${p.cover || p.tracks[0]?.artwork || "./assets/placeholder.svg"}" alt="${escapeHtml(p.name)} cover" />
-            <b>${escapeHtml(p.name)}</b>
-            <small>${p.tracks.length} songs</small>
-          </article>`
-          )
-          .join("") || `<p class="empty">No playlists yet — create your first one.</p>`}
-      </div>`;
-    $("#createPl").onclick = openPlaylistModal;
-  },
-
-  playlistView(id) {
-    const p = state.playlists.find((x) => x.id === id);
-    if (!p) return ui.simple("Playlist", [], "list");
-    ui.view.innerHTML = `
-      <div class="hero" style="display:flex;gap:20px;align-items:center;flex-wrap:wrap">
-        <img src="${p.cover || p.tracks[0]?.artwork || "./assets/placeholder.svg"}" alt="" style="width:140px;height:140px;border-radius:14px;object-fit:cover" />
-        <div>
-          <h1>${escapeHtml(p.name)}</h1>
-          <p>${p.tracks.length} songs</p>
-          <div style="height:12px"></div>
-          <button class="primary-btn" id="playPl">▶ Play</button>
-          <button class="ghost-btn" id="delPl">Delete playlist</button>
-        </div>
-      </div>
-      ${ui.trackList(p.tracks, `pl:${p.id}`)}`;
-    $("#playPl").onclick = () => (p.tracks.length ? player.load(p.tracks, 0) : toast("Playlist is empty"));
-    $("#delPl").onclick = () => {
-      if (!confirm(`Delete "${p.name}"?`)) return;
-      state.playlists = state.playlists.filter((x) => x.id !== id);
-      persist();
-      ui.renderPlaylists();
-      navigate("library");
-      toast("Playlist deleted");
-    };
+    ui.view.innerHTML = `<div class="section-head"><h2>${title}</h2><span>${list.length} songs</span></div>${ui.trackList(list, ctx)}`;
   },
 
   async home() {
     homeCache = {};
-
-    let activeSections = [
+    const sections = [
       { title: "Trending in India", term: "bollywood hits" },
       { title: "90s Evergreen Hits", term: "90s romantic hits hindi" },
       { title: "Punjabi Beats", term: "punjabi 2024" },
-      { title: "Chill & Lo-Fi", term: "lofi chill hindi" },
     ];
-
-    if (state.history.length > 0) {
-      const lastSearch = state.history[0];
-      activeSections.unshift({ title: `Because you searched "${lastSearch}" 🔍`, term: lastSearch });
-    }
-
-    activeSections = activeSections.slice(0, 4);
 
     ui.view.innerHTML = `
       <div class="hero">
         <h3>Welcome to Musify, presented by Sagar Rathore! 🎧</h3>
-        <p>Discover your favorite tracks, build playlists, and keep the good vibes playing while you browse.</p>
+        <p>Discover your favorite tracks and enjoy seamless music streaming.</p>
       </div>
-      ${activeSections.map(
-        (s, i) => `
-        <div class="section-head"><h2>${s.title}</h2><span>Loading songs...</span></div>
-        <div id="sec-${i}">${ui.skeletonGrid(6)}</div>`
-      ).join("")}`;
+      ${sections.map((s, i) => `
+        <div class="section-head"><h2>${s.title}</h2><span>Loading...</span></div>
+        <div id="sec-${i}"><p class="empty">Loading tracks...</p></div>
+      `).join("")}`;
 
-    activeSections.forEach(async (s, i) => {
+    sections.forEach(async (s, i) => {
       const host = $(`#sec-${i}`);
-      const spanHost = host.previousElementSibling.querySelector("span");
+      const span = host.previousElementSibling.querySelector("span");
+      const list = await api.search(s.term, { limit: 6 });
       
-      let attempts = 0;
-      let list = [];
-
-      while (attempts < 2 && list.length === 0) {
-        try {
-          list = await api.search(s.term, { limit: 40 });
-        } catch (e) {
-          attempts++;
-        }
-      }
-
-      const uniqueGridList = [];
-      const seenArtworks = new Set();
-      for (let track of list) {
-        if (!seenArtworks.has(track.artwork)) {
-          seenArtworks.add(track.artwork);
-          uniqueGridList.push(track);
-        }
-        if (uniqueGridList.length >= 6) break;
-      }
-
-      if (uniqueGridList.length < 6) {
-        try {
-          const fallbackList = await api.search("bollywood hits", { limit: 20 });
-          for (let track of fallbackList) {
-            if (!seenArtworks.has(track.artwork) && uniqueGridList.length < 6) {
-              seenArtworks.add(track.artwork);
-              uniqueGridList.push(track);
-            }
-          }
-        } catch (e) {}
-      }
-
-      if (uniqueGridList.length > 0) {
-        spanHost.textContent = "Preview clips";
-        homeCache[i] = uniqueGridList;
-        host.innerHTML = `<div class="grid">${uniqueGridList
-          .map((t, k) => ui.card(t, `home:${i}`, k))
-          .join("")}</div>`;
+      if (list.length > 0) {
+        span.textContent = "Preview clips";
+        homeCache[i] = list;
+        host.innerHTML = `<div class="grid">${list.map((t, k) => ui.card(t, `home:${i}`, k)).join("")}</div>`;
       } else {
-        spanHost.textContent = "Failed to load";
-        host.innerHTML = ui.errorBox("Server is waking up, tap to retry.", `retry-${i}`);
-        $(`#retry-${i}`).onclick = () => ui.home();
+        span.textContent = "Error";
+        host.innerHTML = `<p class="empty">Failed to load. Refresh page.</p>`;
       }
     });
   },
 
   searchView() {
     const s = state.search;
-    
-    const historyHtml = state.history.length ? `
-      <div style="margin-bottom: 20px;">
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 8px;">
-          <h3 style="font-size:16px; color:var(--muted); margin:0;">Recent Searches</h3>
-          <button id="clearHistory" class="ghost-btn" style="padding: 2px 8px; font-size: 12px;">Clear</button>
-        </div>
-        <div style="display:flex; flex-wrap:wrap; gap:8px;">
-          ${state.history.map(item => `<button class="history-chip ghost-btn" data-term="${escapeHtml(item)}" style="font-size:13px; padding:6px 12px;">🔍 ${escapeHtml(item)}</button>`).join("")}
-        </div>
-      </div>` : "";
-
-    const recentSongsHtml = state.recent.length && !s.term ? `
-      <div style="margin-bottom: 24px;">
-        <h3 style="font-size:16px; color:var(--muted); margin:0 0 10px 0;">Recently Played Songs</h3>
-        ${ui.trackList(state.recent.slice(0, 5), "recent")}
-      </div>` : "";
-
     ui.view.innerHTML = `
-      <div class="section-head">
-        <h2>${s.term ? `Results for “${escapeHtml(s.term)}”` : "Search"}</h2>
-        <span>${s.results.length} songs</span>
-      </div>
-      ${historyHtml}
-      ${recentSongsHtml}
-      <div id="searchResults">
-        ${s.term ? ui.trackList(s.results, "search") : `<p class="empty">Start typing to find songs, artists or albums.</p>`}
-      </div>
-      <div id="searchMore"></div>`;
-
-    const clearBtn = $("#clearHistory");
-    if (clearBtn) {
-      clearBtn.onclick = () => {
-        state.history = [];
-        persist();
-        ui.searchView();
-      };
-    }
-
-    $$(".history-chip").forEach(chip => {
-      chip.onclick = () => {
-        const term = chip.dataset.term;
-        $("#searchInput").value = term;
-        state.search.term = term;
-        runSearch(true);
-      };
-    });
-  },
-
-  ctxList(ctx) {
-    if (ctx === "liked") return state.liked;
-    if (ctx === "recent") return state.recent;
-    if (ctx === "queue") return state.queue;
-    if (ctx === "search") return state.search.results;
-    if (ctx.startsWith("home:")) return homeCache[Number(ctx.split(":")[1])] || [];
-    if (ctx.startsWith("pl:")) return state.playlists.find((p) => p.id === ctx.slice(3))?.tracks || [];
-    return [];
-  },
-
-  renderPlaylists() {
-    $("#playlistList").innerHTML = state.playlists
-      .map((p) => `<li><button data-pl-nav="${p.id}">♪ ${escapeHtml(p.name)}</button></li>`)
-      .join("");
+      <div class="section-head"><h2>Search</h2><span>${s.results.length} songs</span></div>
+      <div id="searchResults">${s.term ? ui.trackList(s.results, "search") : `<p class="empty">Type above to search songs.</p>`}</div>`;
   },
 
   renderNowPlaying(t) {
@@ -520,56 +290,54 @@ const ui = {
     $("#miniTitle").textContent = t.title;
     $("#miniArtist").textContent = t.artist;
     $("#mini").hidden = false;
-    ui.syncLike();
-    ui.markPlaying();
-    if (!$("#lyricsPanel").hidden) loadLyrics();
-  },
-
-  markPlaying() {
-    const cur = state.queue[state.index];
-    $$(".row").forEach((r) => r.classList.toggle("playing", !!cur && r.dataset.id === cur.id));
-  },
-
-  syncLike() {
-    const cur = state.queue[state.index];
-    const btn = $("#likeBtn");
-    const on = cur && isLiked(cur.id);
-    btn.classList.toggle("on", !!on);
-    btn.textContent = on ? "♥" : "♡";
-  },
+  }
 };
 
 /* ------------------------------------------------------------------
- * Navigation & Events
+ * Events
  * ---------------------------------------------------------------- */
 function navigate(view) {
   state.view = view;
   ui.render();
   $("#main").scrollTo({ top: 0, behavior: "smooth" });
-  closeSidebar();
 }
 
-$$(".nav-item").forEach((b) => (b.onclick = () => navigate(b.dataset.view)));
-
-$("#playlistList").addEventListener("click", (e) => {
-  const btn = e.target.closest("[data-pl-nav]");
-  if (btn) navigate(`pl:${btn.dataset.plNav}`);
-});
+$$(".nav-item").forEach((b) => b.onclick = () => navigate(b.dataset.view));
 
 ui.view.addEventListener("click", (e) => {
   const card = e.target.closest(".card");
   const row = e.target.closest(".row");
-  const actBtn = e.target.closest("[data-act]");
-
-  if (card?.dataset.pl) return navigate(`pl:${card.dataset.pl}`);
-
   const host = row || card;
   if (!host) return;
-  const list = ui.ctxList(host.dataset.ctx);
+  
+  let list = [];
+  if (host.dataset.ctx.startsWith("home:")) {
+    list = homeCache[Number(host.dataset.ctx.split(":")[1])] || [];
+  } else if (host.dataset.ctx === "search") {
+    list = state.search.results;
+  } else if (host.dataset.ctx === "recent") {
+    list = state.recent;
+  }
+  
   const idx = Number(host.dataset.index);
-  const track = list[idx];
-  if (!track) return;
+  if (list[idx]) player.load(list, idx);
+});
 
-  const act = actBtn?.dataset.act;
-  if (act === "like") return toggleLike(track);
-  if (ac
+$("#searchInput").addEventListener("input", debounce(async (e) => {
+  const term = e.target.value.trim();
+  state.search.term = term;
+  if (state.view !== "search") navigate("search");
+  if (term) {
+    state.search.results = await api.search(term, { limit: 20 });
+    ui.searchView();
+  }
+}, 400));
+
+$("#playBtn").onclick = () => player.toggle();
+$("#miniPlay").onclick = () => player.toggle();
+$("#nextBtn").onclick = () => player.next();
+$("#prevBtn").onclick = () => player.prev();
+$("#miniClose").onclick = () => ($("#mini").hidden = true);
+
+// Boot
+ui.render();
